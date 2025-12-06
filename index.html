@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>TimeWeb Cloud API</title>
+</head>
+<body>
+    <div>
+        <label>API токен:</label>
+        <input type="text" id="tokenInput" placeholder="Введите токен">
+        <button onclick="saveToken()">Сохранить токен</button>
+    </div>
+    
+    <div>
+        <button onclick="loadFinancialInfo()">Финансы</button>
+        <button onclick="loadOSInfo()">Доступные ОС</button>
+        <button onclick="loadServers()">Список серверов</button>
+        <button onclick="showCreateServerForm()">Создать сервер</button>
+    </div>
+    
+    <div id="createServerForm" style="display:none; margin-top:20px; padding:10px; border:1px solid #ccc;">
+        <h3>Создание сервера</h3>
+        <label>Имя сервера: <input type="text" id="serverName" placeholder="name"></label><br>
+        <label>Комментарий: <input type="text" id="serverComment" placeholder="comment"></label><br>
+        <label>OS ID: <input type="number" id="osId" placeholder="99" value="99"></label><br>
+        <label>Preset ID: <input type="number" id="presetId" placeholder="4797" value="4797"></label><br>
+        <label>Пропускная способность (Mbps): <input type="number" id="bandwidth" placeholder="1000" value="1000"></label><br>
+        <label><input type="checkbox" id="ddosGuard" checked> DDOS Guard</label><br>
+        <button onclick="createServer()">Создать</button>
+        <button onclick="hideCreateServerForm()">Отмена</button>
+    </div>
+    
+    <div id="result"></div>
+    <pre id="jsonResult"></pre>
+
+    <script>
+        let currentServersData = null;
+
+        function saveToken() {
+            const token = document.getElementById('tokenInput').value;
+            localStorage.setItem('timeweb_token', token);
+            alert('Токен сохранён');
+        }
+
+        function getToken() {
+            const token = localStorage.getItem('timeweb_token');
+            if (!token) {
+                alert('Сначала сохраните токен');
+                return null;
+            }
+            return token;
+        }
+
+        async function fetchData(url, displayFunction, method = 'GET', body = null) {
+            const token = getToken();
+            if (!token) return;
+
+            try {
+                const options = {
+                    method: method,
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    }
+                };
+
+                if (body && (method === 'POST' || method === 'PUT')) {
+                    options.body = JSON.stringify(body);
+                }
+
+                const response = await fetch(url, options);
+
+                if (!response.ok) throw new Error('Ошибка запроса');
+                
+                const data = await response.json();
+                displayFunction(data);
+            } catch (error) {
+                document.getElementById('result').innerHTML = `<p>Ошибка: ${error.message}</p>`;
+                document.getElementById('jsonResult').textContent = '';
+            }
+        }
+
+        async function deleteServer(serverId, serverName) {
+            if (!confirm(`Вы уверены, что хотите удалить сервер "${serverName}" (ID: ${serverId})?`)) {
+                return;
+            }
+
+            await fetchData(
+                `https://api.timeweb.cloud/api/v1/servers/${serverId}`,
+                function(data) {
+                    alert('Сервер успешно удалён');
+                    loadServers();
+                },
+                'DELETE'
+            );
+        }
+
+        async function createServer() {
+            const serverData = {
+                preset_id: parseInt(document.getElementById('presetId').value),
+                is_ddos_guard: document.getElementById('ddosGuard').checked,
+                os_id: parseInt(document.getElementById('osId').value),
+                bandwidth: parseInt(document.getElementById('bandwidth').value),
+                name: document.getElementById('serverName').value || 'new-server',
+                comment: document.getElementById('serverComment').value || ''
+            };
+
+            if (!serverData.name) {
+                alert('Введите имя сервера');
+                return;
+            }
+
+            await fetchData(
+                'https://api.timeweb.cloud/api/v1/servers',
+                function(data) {
+                    alert(`Сервер "${serverData.name}" успешно создан с ID: ${data.server.id}`);
+                    hideCreateServerForm();
+                    loadServers();
+                },
+                'POST',
+                serverData
+            );
+        }
+
+        function showCreateServerForm() {
+            document.getElementById('createServerForm').style.display = 'block';
+        }
+
+        function hideCreateServerForm() {
+            document.getElementById('createServerForm').style.display = 'none';
+        }
+
+        async function loadFinancialInfo() {
+            await fetchData(
+                'https://api.timeweb.cloud/api/v1/account/finances',
+                displayFinancialResults
+            );
+        }
+
+        async function loadOSInfo() {
+            await fetchData(
+                'https://api.timeweb.cloud/api/v1/os/servers',
+                displayOSResults
+            );
+        }
+
+        async function loadServers() {
+            await fetchData(
+                'https://api.timeweb.cloud/api/v1/servers?limit=100&offset=0',
+                displayServersResults
+            );
+        }
+
+        function displayJson(data) {
+            document.getElementById('jsonResult').textContent = JSON.stringify(data, null, 2);
+        }
+
+        function displayFinancialResults(data) {
+            let html = '<h3>Финансовая информация</h3><ul>';
+            
+            for (const [key, value] of Object.entries(data.finances)) {
+                html += `<li><strong>${key}:</strong> ${value}</li>`;
+            }
+            
+            html += `</ul><p><strong>response_id:</strong> ${data.response_id}</p>`;
+            document.getElementById('result').innerHTML = html;
+            displayJson(data);
+        }
+
+        function displayOSResults(data) {
+            let html = `<h3>Доступные ОС (всего: ${data.meta.total})</h3><ul>`;
+            
+            data.servers_os.forEach(os => {
+                html += `<li>
+                    <strong>${os.name} ${os.version}</strong> 
+                    (${os.family}, ID: ${os.id})
+                    ${os.requirements ? `, требуется диск: ${os.requirements.disk_min}MB` : ''}
+                </li>`;
+            });
+            
+            html += `</ul><p><strong>response_id:</strong> ${data.response_id}</p>`;
+            document.getElementById('result').innerHTML = html;
+            displayJson(data);
+        }
+
+        function displayServersResults(data) {
+            currentServersData = data;
+            let html = `<h3>Серверы (всего: ${data.meta.total})</h3><ul>`;
+            
+            data.servers.forEach(server => {
+                html += `<li>
+                    <strong>${server.name}</strong> (ID: ${server.id})
+                    <br>Статус: ${server.status}
+                    <br>ОС: ${server.os.name} ${server.os.version}
+                    <br>CPU: ${server.cpu} ядер, RAM: ${server.ram} MB
+                    <br>IP-адреса: ${server.networks[0]?.ips.map(ip => ip.ip).join(', ') || 'нет'}
+                    <br>Создан: ${new Date(server.created_at).toLocaleString()}
+                    <br><button onclick="deleteServer(${server.id}, '${server.name.replace(/'/g, "\\'")}')">Удалить сервер</button>
+                </li><br>`;
+            });
+            
+            html += `</ul><p><strong>response_id:</strong> ${data.response_id}</p>`;
+            document.getElementById('result').innerHTML = html;
+            displayJson(data);
+        }
+    </script>
+</body>
+</html>
